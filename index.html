@@ -2,8 +2,7 @@
 <html>
 
 <head>
-  <base href="/">
-
+  
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
   <meta name="description" content="Ежедневник с синхронизацией">
@@ -29,15 +28,15 @@
       multiView: false,
       noCdn: false,
       webSocketEndpoint: "/ws",
-      entrypointBaseUrl: "/",
-      assetBase: "/",
+      entrypointBaseUrl: "./",
+      assetBase: "./",
       routeUrlStrategy: "path",
-      canvasKitBaseUrl: "/canvaskit/",
+      canvasKitBaseUrl: "./canvaskit/",
       // Default fallback only — `patch_index.py` overrides this with the
       // resolved per-build URL (CDN or local) at deploy time. The `.mjs`
       // suffix is required because python-worker.js is a module worker
       // that loads the runtime via dynamic `import()`. See client/web/python.js.
-      pyodideUrl: "/pyodide/pyodide.mjs",
+      pyodideUrl: "./pyodide/pyodide.mjs",
       webRenderer: "auto",
       fontFallbackBaseUrl: "assets/fonts/", // for Noto Emoji, use Google CDN
       appPackageUrl: "app.tar.gz"
@@ -148,8 +147,8 @@
         // Если этого не сделать, flutter-bootstrap при виде чужой регистрации
         // поставит свой воркер и затрёт наш.
         navigator.serviceWorker
-          .register('/flutter_service_worker.js?v=offline', {
-            scope: '/', updateViaCache: 'none',
+          .register('./flutter_service_worker.js?v=offline', {
+            scope: './', updateViaCache: 'none',
           })
           .catch(function () {});
       }
@@ -164,8 +163,8 @@ flet.pyodideUrl="./pyodide/pyodide.mjs";
 flet.noCdn=true;
 flet.webRenderer="canvaskit";
 flet.routeUrlStrategy="hash";
-flet.entrypointBaseUrl="/";
-flet.assetBase="/";
+flet.entrypointBaseUrl="./";
+flet.assetBase="./";
 </script>
 
   <script src="python.js"></script>

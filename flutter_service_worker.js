@@ -10,7 +10,7 @@
  *   версию SW: при пересборке имя кэша меняется, старый удаляется).
  * - Кросс-доменное (Firebase REST): только сеть, SW не вмешивается.
  */
-const VERSION = 'ezh-wasm-v3-1793305132';
+const VERSION = 'ezh-wasm-v4-subpath-1793342333';
 const CORE = [
   './', './index.html', './flutter_bootstrap.js', './flutter.js',
   './python.js', './python-worker.js', './main.dart.js', './main.dart.mjs',
