@@ -53,7 +53,7 @@
       // ломается и приложение висит на "Working...").
       // Web Push работает и без контроля страницы: подписка создаётся
       // через registration.pushManager.subscribe().
-      return await navigator.serviceWorker.register('/sw.js', { scope: '/push/' });
+      return await navigator.serviceWorker.register('./sw.js', { scope: './push/' });
     } catch (e) {
       console.warn('[push-bridge] SW register failed:', e);
       return null;
@@ -133,6 +133,79 @@
       return sub.unsubscribe();
     },
   };
+
+
+  // ===== Статическая сборка (WASM): системные уведомления из Python =====
+  // Python-воркер публикует напоминание в BroadcastChannel, здесь мы
+  // показываем СИСТЕМНОЕ уведомление (работает и когда PWA свёрнута) со
+  // звуком. Когда PWA закрыта полностью — уведомления доставит сервер
+  // через Web Push (этап 2).
+  const beepTwice = () => {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const t0 = ctx.currentTime;
+      [[880, 0], [1318.5, 0.22]].forEach(([freq, dt]) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, t0 + dt);
+        gain.gain.exponentialRampToValueAtTime(0.28, t0 + dt + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.34);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(t0 + dt);
+        osc.stop(t0 + dt + 0.36);
+      });
+      setTimeout(() => { try { ctx.close(); } catch (e) {} }, 900);
+    } catch (e) { /* звук не критичен */ }
+  };
+
+  const showSystemNotification = async (title, body, extra) => {
+    extra = extra || {};
+    if (!('Notification' in window)) return;
+    let permission = Notification.permission;
+    if (permission === 'default') {
+      try { permission = await Notification.requestPermission(); } catch (e) {}
+    }
+    if (permission !== 'granted') return;
+    const options = {
+      body: body || '',
+      icon: './icons/icon-192.png',
+      badge: './icons/icon-192.png',
+      tag: extra.tag || ('reminder-' + Date.now()),
+      renotify: true,
+      requireInteraction: false,
+      silent: false,
+      data: { url: extra.url || './', task_id: extra.task_id || 0 },
+    };
+    try {
+      let reg = swReg;
+      if (!reg && navigator.serviceWorker) {
+        reg = await navigator.serviceWorker.getRegistration('./push/');
+      }
+      if (reg && reg.showNotification) {
+        await reg.showNotification(title, options);
+      } else {
+        new Notification(title, options);
+      }
+    } catch (e) {
+      try { new Notification(title, options); } catch (e2) {}
+    }
+  };
+
+  try {
+    const notifyChannel = new BroadcastChannel('ezh-notify');
+    notifyChannel.onmessage = (event) => {
+      let data = {};
+      try {
+        data = (typeof event.data === 'string') ? JSON.parse(event.data) : (event.data || {});
+      } catch (e) {}
+      beepTwice();
+      showSystemNotification(data.title || 'Ежедневник', data.body || '', data);
+    };
+  } catch (e) { /* BroadcastChannel недоступен — не критично */ }
 
   // Автоподписка: разрешение уже выдано (например, после установки PWA),
   // а подписка исчезла/протухла — восстанавливаем молча.
