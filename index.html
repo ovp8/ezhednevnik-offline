@@ -39,7 +39,7 @@
       pyodideUrl: "./pyodide/pyodide.mjs",
       webRenderer: "auto",
       fontFallbackBaseUrl: "assets/fonts/", // for Noto Emoji, use Google CDN
-      appPackageUrl: "app.tar.gz"
+      appPackageUrl: "app.tar.gz?v=3"
     }
 
     flet.flutterAppLoaded = new Promise((resolve) => {
@@ -129,13 +129,14 @@
       }
       var wasOpen = false;
       setInterval(function () {
+        if (window.flet && flet.pyodide) return; // статическая сборка: сервера нет, баннер не показываем
         var wsOpen = lastWs && lastWs.readyState === 1;
         if (wsOpen) {
           if (!wasOpen) { wasOpen = true; hideBanner(); }
           return;
         }
         if (wasOpen) { wasOpen = false; bannerShownAt = 0; } // связь потеряна
-        if (false) showBanner(); /* статическая сборка: серверного баннера нет */
+        if (Date.now() - bootedAt > 15000 && !bannerShownAt) showBanner();
         else if (banner && bannerShownAt && Date.now() - bannerShownAt > 4000) {
           banner.textContent = bannerText();
         }

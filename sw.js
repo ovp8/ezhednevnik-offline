@@ -45,7 +45,7 @@ self.addEventListener('push', (event) => {
     requireInteraction: false,
     silent: false,
     data: {
-      url: data.url || '/',
+      url: data.url || './',
       task_id: data.task_id || 0,
     },
   };
@@ -56,11 +56,11 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const target = (event.notification.data && event.notification.data.url) || '/';
+  const target = (event.notification.data && event.notification.data.url) || './';
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
-      // фокусируем уже открытое окно приложения (url '/')
+      // фокусируем уже открытое окно приложения (относительный url)
       for (const client of windowClients) {
         if ('focus' in client) {
           client.navigate(target).catch(() => {});
