@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0F1115">
+<title>Ежедневник · нет сети</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    background: #0F1115; color: #E6EDF3;
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    padding: 24px;
+  }
+  .card { max-width: 420px; text-align: center; }
+  .icon {
+    width: 84px; height: 84px; margin: 0 auto 20px;
+    border-radius: 22px; background: #1C2128;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 40px;
+  }
+  h1 { font-size: 20px; margin: 0 0 10px; }
+  p { font-size: 14px; line-height: 1.55; color: #9BA7B4; margin: 0 0 22px; }
+  button {
+    appearance: none; border: 0; cursor: pointer;
+    background: #2F81F7; color: #fff;
+    font-size: 15px; font-weight: 600;
+    padding: 13px 34px; border-radius: 12px;
+  }
+  button:active { opacity: .85; }
+  .status { margin-top: 16px; font-size: 12px; color: #6E7A87; min-height: 16px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">📴</div>
+  <h1>Нет подключения к интернету</h1>
+  <p>Ежедневнику нужна сеть: задачи хранятся в облаке и синхронизируются между устройствами. Проверьте Wi-Fi или мобильный интернет — приложение откроется автоматически.</p>
+  <button onclick="location.reload()">Повторить</button>
+  <div class="status" id="status">проверяем соединение…</div>
+</div>
+<script>
+  var statusEl = document.getElementById('status');
+  function check() {
+    fetch('/api/health', { cache: 'no-store' })
+      .then(function (r) {
+        if (r.ok) {
+          statusEl.textContent = 'связь появилась — открываем…';
+          location.reload();
+        } else {
+          statusEl.textContent = 'сервер недоступен, пробуем ещё…';
+        }
+      })
+      .catch(function () {
+        statusEl.textContent = 'сети пока нет, пробуем ещё…';
+      });
+  }
+  setInterval(check, 4000);
+  window.addEventListener('online', check);
+  check();
+</script>
+</body>
+</html>

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0F1115">
+  <title>Уведомления — Ежедневник</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
+      background: #0F1115;
+      color: #E8EAED;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom);
+    }
+
+    .card {
+      width: 100%;
+      max-width: 420px;
+      background: #171A21;
+      border-radius: 20px;
+      padding: 28px 22px;
+      box-shadow: 0 8px 40px rgba(0, 0, 0, .5);
+    }
+
+    h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+
+    .sub { font-size: 14px; color: #9AA0A6; line-height: 1.5; margin-bottom: 22px; }
+
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: #1F2430;
+      margin-bottom: 18px;
+    }
+
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: #9AA0A6; flex: none; }
+    .dot.ok { background: #34C759; }
+    .dot.warn { background: #FF9F0A; }
+    .dot.err { background: #FF453A; }
+
+    button {
+      width: 100%;
+      border: none;
+      border-radius: 14px;
+      padding: 15px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-bottom: 10px;
+      -webkit-appearance: none;
+    }
+
+    .primary { background: #0A84FF; color: #fff; }
+    .primary:active { opacity: .8; }
+    .ghost { background: #232936; color: #E8EAED; }
+
+    button:disabled { opacity: .45; cursor: default; }
+
+    .hint {
+      font-size: 13px;
+      color: #9AA0A6;
+      line-height: 1.55;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #232936;
+    }
+
+    .hint b { color: #E8EAED; }
+
+    #msg { font-size: 13px; color: #9AA0A6; margin-top: 10px; min-height: 16px; text-align: center; }
+  </style>
+</head>
+
+<body>
+  <div class="card">
+    <h1>Уведомления</h1>
+    <p class="sub">Системные напоминания «Ежедневника» на этом устройстве — даже когда приложение закрыто.</p>
+
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">Проверяем…</span></div>
+
+    <button class="primary" id="btnEnable">Разрешить уведомления</button>
+    <button class="ghost" id="btnTest">Проверить уведомление</button>
+    <button class="ghost" id="btnOff">Отключить</button>
+
+    <div id="msg"></div>
+
+    <p class="hint">
+      <b>Установка на iPhone:</b> в Safari нажмите «Поделиться», затем
+      <b>«На экран „Домой“»</b> — приложение появится на рабочем экране
+      без App Store и без Apple ID.
+    </p>
+  </div>
+
+  <script src="push-bridge.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const msg = (t) => { $('msg').textContent = t || ''; };
+
+    function setStatus(kind, text) {
+      $('dot').className = 'dot ' + kind;
+      $('statusText').textContent = text;
+    }
+
+    async function refresh() {
+      // ждём мост (push-bridge.js загружается асинхронно)
+      for (let i = 0; i < 50 && !window.fletPush; i++) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+      if (!window.fletPush) { setStatus('err', 'Мост уведомлений не загрузился'); return; }
+      const st = await window.fletPush.status();
+      if (!st.supported) {
+        setStatus('warn', 'Браузер не поддерживает Web Push. Откройте страницу через HTTPS в Safari.');
+        $('btnEnable').disabled = true;
+        return;
+      }
+      if (st.subscribed && st.permission === 'granted') {
+        setStatus('ok', 'Уведомления включены ✓');
+      } else if (st.permission === 'denied') {
+        setStatus('err', 'Запрещено в настройках Safari → Уведомления');
+      } else {
+        setStatus('warn', 'Не включены — нажмите «Разрешить уведомления»');
+      }
+    }
+
+    $('btnEnable').onclick = async () => {
+      try {
+        $('btnEnable').disabled = true;
+        msg('Ожидаем разрешение…');
+        const sub = await window.fletPush.subscribe();
+        msg('Готово: подписка сохранена на сервере.');
+        console.log('subscription', sub);
+      } catch (e) {
+        msg('Не получилось: ' + e.message);
+      } finally {
+        $('btnEnable').disabled = false;
+        refresh();
+      }
+    };
+
+    $('btnTest').onclick = async () => {
+      try {
+        msg('Отправляем тестовое уведомление…');
+        const resp = await fetch('/api/push/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        const data = await resp.json();
+        msg(data.sent > 0 ? 'Отправлено! Проверьте шторку уведомлений.' :
+            ('Сервер ответил: ' + JSON.stringify(data)));
+      } catch (e) {
+        msg('Ошибка: ' + e.message);
+      }
+    };
+
+    $('btnOff').onclick = async () => {
+      try {
+        await window.fletPush.unsubscribe();
+        msg('Уведомления отключены.');
+      } catch (e) {
+        msg('Ошибка: ' + e.message);
+      }
+      refresh();
+    };
+
+    refresh();
+  </script>
+</body>
+
+</html>

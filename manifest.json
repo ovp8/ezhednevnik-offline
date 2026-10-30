@@ -1,0 +1,37 @@
+{
+  "name": "\u0415\u0436\u0435\u0434\u043d\u0435\u0432\u043d\u0438\u043a",
+  "short_name": "\u0415\u0436\u0435\u0434\u043d\u0435\u0432\u043d\u0438\u043a",
+  "description": "\u0415\u0436\u0435\u0434\u043d\u0435\u0432\u043d\u0438\u043a \u0441 \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0430\u0446\u0438\u0435\u0439",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0F1115",
+  "theme_color": "#0F1115",
+  "lang": "ru",
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

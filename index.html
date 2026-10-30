@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <base href="/">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="Ежедневник с синхронизацией">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Ежедневник">
+  <meta name="theme-color" content="#0F1115">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png" />
+
+  <title>Ежедневник</title>
+  <link rel="manifest" href="manifest.json">
+
+  <script>
+    var flet = {
+      pyodide: false,
+      multiView: false,
+      noCdn: false,
+      webSocketEndpoint: "/ws",
+      entrypointBaseUrl: "/",
+      assetBase: "/",
+      routeUrlStrategy: "path",
+      canvasKitBaseUrl: "/canvaskit/",
+      // Default fallback only — `patch_index.py` overrides this with the
+      // resolved per-build URL (CDN or local) at deploy time. The `.mjs`
+      // suffix is required because python-worker.js is a module worker
+      // that loads the runtime via dynamic `import()`. See client/web/python.js.
+      pyodideUrl: "/pyodide/pyodide.mjs",
+      webRenderer: "auto",
+      fontFallbackBaseUrl: "assets/fonts/", // for Noto Emoji, use Google CDN
+      appPackageUrl: "app.tar.gz"
+    }
+
+    flet.flutterAppLoaded = new Promise((resolve) => {
+      flet.flutterAppResolve = resolve;
+    });
+
+    flet.flutterAppLoaded.then((flutterApp) => {
+      console.log("Flutter app loaded");
+    });
+  </script>
+
+  <!-- Мост системных уведомлений iPhone/PWA (Web Push) -->
+  <script src="push-bridge.js" defer></script>
+
+  <!-- Автовосстановление после сна iOS и офлайн-заглушка.
+       iOS PWA, уснув в фоне, теряет WebSocket. При возврате проверяем
+       состояние соединения: если оно мертво, а сервер доступен — тихо
+       перезапускаем приложение (вместо белого экрана и танцев с «назад»).
+       Заодно регистрируем offline-sw.js: без сети вместо ошибки Safari
+       откроется страница offline.html. -->
+  <script>
+    (function () {
+      'use strict';
+      var bootedAt = Date.now();
+      var lastWs = null;
+      var OrigWS = window.WebSocket;
+      if (OrigWS) {
+        var PatchedWS = function (url, protocols) {
+          var ws = protocols === undefined
+            ? new OrigWS(url) : new OrigWS(url, protocols);
+          try { if (String(url).indexOf('/ws') !== -1) lastWs = ws; } catch (e) {}
+          return ws;
+        };
+        PatchedWS.prototype = OrigWS.prototype;
+        PatchedWS.CONNECTING = 0; PatchedWS.OPEN = 1;
+        PatchedWS.CLOSING = 2; PatchedWS.CLOSED = 3;
+        try { window.WebSocket = PatchedWS; } catch (e) {}
+      }
+      function serverAlive() {
+        return fetch('/api/health', { cache: 'no-store' })
+          .then(function (r) { return !!r.ok; })
+          .catch(function () { return false; });
+      }
+      function maybeReload() {
+        if (Date.now() - bootedAt < 10000) return; // только что открылись
+        var ws = lastWs;
+        var dead = !ws || ws.readyState === 2 || ws.readyState === 3;
+        if (dead && navigator.onLine !== false) {
+          serverAlive().then(function (ok) { if (ok) location.reload(); });
+        }
+      }
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') {
+          setTimeout(maybeReload, 2500);
+        }
+      });
+      window.addEventListener('online', function () {
+        setTimeout(maybeReload, 1000);
+      });
+
+      // --- Подсказка о соединении (сервер Render может просыпаться до минуты) ---
+      var banner = null, bannerShownAt = 0;
+      function bannerText() {
+        return navigator.onLine === false
+          ? 'Нет подключения к интернету'
+          : 'Соединение с сервером… Бесплатный сервер может просыпаться до минуты';
+      }
+      function showBanner() {
+        if (!banner) {
+          banner = document.createElement('div');
+          banner.style.cssText = 'position:fixed;left:50%;bottom:22px;' +
+            'transform:translateX(-50%);max-width:86vw;background:#1C2128;' +
+            'color:#9BA7B4;font:13px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;' +
+            'padding:9px 16px;border-radius:12px;border:1px solid #2A3138;' +
+            'box-shadow:0 4px 16px rgba(0,0,0,.4);z-index:2147483000;' +
+            'text-align:center;opacity:0;transition:opacity .4s';
+          document.body.appendChild(banner);
+        }
+        banner.textContent = bannerText();
+        requestAnimationFrame(function () { banner.style.opacity = '1'; });
+        bannerShownAt = Date.now();
+      }
+      function hideBanner() {
+        if (banner && banner.style.opacity === '1') {
+          banner.style.opacity = '0';
+        }
+      }
+      var wasOpen = false;
+      setInterval(function () {
+        var wsOpen = lastWs && lastWs.readyState === 1;
+        if (wsOpen) {
+          if (!wasOpen) { wasOpen = true; hideBanner(); }
+          return;
+        }
+        if (wasOpen) { wasOpen = false; bannerShownAt = 0; } // связь потеряна
+        if (false) showBanner(); /* статическая сборка: серверного баннера нет */
+        else if (banner && bannerShownAt && Date.now() - bannerShownAt > 4000) {
+          banner.textContent = bannerText();
+        }
+      }, 1000);
+
+      if ('serviceWorker' in navigator) {
+        // Регистрируем СВОЙ flutter_service_worker.js (лежит в assets и
+        // затеняет файл flet): офлайн-навигации -> offline.html.
+        // Если этого не сделать, flutter-bootstrap при виде чужой регистрации
+        // поставит свой воркер и затрёт наш.
+        navigator.serviceWorker
+          .register('/flutter_service_worker.js?v=offline', {
+            scope: '/', updateViaCache: 'none',
+          })
+          .catch(function () {});
+      }
+    })();
+  </script>
+
+  <script>
+flet.pyodide = true;
+flet.micropipIncludePre = false;
+flet.pythonModuleName = "main";
+flet.pyodideUrl="./pyodide/pyodide.mjs";
+flet.noCdn=true;
+flet.webRenderer="canvaskit";
+flet.routeUrlStrategy="hash";
+flet.entrypointBaseUrl="/";
+flet.assetBase="/";
+</script>
+
+  <script src="python.js"></script>
+</head>
+
+<body>
+  <div id="loading">
+    <style>
+      body {
+        inset: 0;
+        overflow: hidden;
+        margin: 0;
+        padding: 0;
+        position: fixed;
+        background: #0F1115;
+      }
+
+      #loading {
+        align-items: center;
+        display: flex;
+        height: 100%;
+        justify-content: center;
+        width: 100%;
+      }
+
+      #loading img {
+        animation: 1s ease-in-out 0s infinite alternate breathe;
+        opacity: .66;
+        transition: opacity .4s;
+      }
+
+      #loading.main_done img {
+        opacity: 1;
+      }
+
+      #loading.init_done img {
+        animation: .33s ease-in-out 0s 1 forwards zooooom;
+        opacity: .05;
+      }
+
+      @keyframes breathe {
+        from {
+          transform: scale(0.4);
+          opacity: 1.0;
+        }
+
+        to {
+          transform: scale(0.35);
+          opacity: .7;
+        }
+      }
+
+      @keyframes zooooom {
+        from {
+          transform: scale(0.4)
+        }
+
+        to {
+          transform: scale(10)
+        }
+      }
+    </style>
+    <img src="icons/icon-192.png" alt="Загрузка..." />
+  </div>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+
+</html>
