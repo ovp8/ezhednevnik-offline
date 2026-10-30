@@ -98,7 +98,7 @@
     <p class="hint">
       <b>Установка на iPhone:</b> в Safari нажмите «Поделиться», затем
       <b>«На экран „Домой“»</b> — приложение появится на рабочем экране
-      без App Store и без Apple ID.
+      без App Store и без Apple ID. Требуется iOS 16.4+.
     </p>
   </div>
 
@@ -138,7 +138,7 @@
         $('btnEnable').disabled = true;
         msg('Ожидаем разрешение…');
         const sub = await window.fletPush.subscribe();
-        msg('Готово: подписка сохранена на сервере.');
+        msg('Готово: подписка сохранена на push-сервере, расписание передано.');
         console.log('subscription', sub);
       } catch (e) {
         msg('Не получилось: ' + e.message);
@@ -150,11 +150,15 @@
 
     $('btnTest').onclick = async () => {
       try {
+        if (!window.fletPush.config || !window.fletPush.config.serverConfigured) {
+          msg('Адрес push-сервера не задан (push-bridge.js → PUSH_SERVER).');
+          return;
+        }
         msg('Отправляем тестовое уведомление…');
-        const resp = await fetch('/api/push/test', {
+        const resp = await fetch(window.fletPush.config.server + '/test', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ uid: window.fletPush.getUid() }),
         });
         const data = await resp.json();
         msg(data.sent > 0 ? 'Отправлено! Проверьте шторку уведомлений.' :
