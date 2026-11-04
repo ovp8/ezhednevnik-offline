@@ -17,7 +17,11 @@
  *       POST {server}/suppress, чтобы не приходил дубль push.
  *  4. Баннер «Включить напоминания» — включение в один тап (iOS требует
  *     запрос разрешения из жеста пользователя).
- *  5. Экспортирует window.fletPush для push-setup.html:
+ *  5. НАДЁЖНОСТЬ (v2): подписка на сервер повторяется автоматически, пока
+ *     сервер её не подтвердит. Спящий Render просыпается до минуты, поэтому
+ *     одиночный POST /subscribe мог теряться — теперь есть ретраи и повтор
+ *     при каждом запуске приложения.
+ *  6. Экспортирует window.fletPush для push-setup.html:
  *     fletPush.subscribe() / unsubscribe() / status() / getUid() / config.
  *
  * ФИКС ЗВУКА (iOS): AudioContext создаётся заранее и разблокируется на
@@ -95,6 +99,41 @@
     });
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     return resp.json().catch(() => ({}));
+  };
+
+  /* ====== Надёжная синхронизация подписки с сервером (v2) ======
+   * Локальная подписка создаётся мгновенно, но POST /subscribe уходит на
+   * сервер, который может СПАТЬ (бесплатный Render: холодный старт 20–60 с,
+   * сон после ~15 мин простоя). Одиночная попытка могла теряться навсегда.
+   * Теперь: повторяем /subscribe с уже существующей локальной подпиской
+   * (сервер сохраняет идемпотентно, по хэшу endpoint) с ретраями, пока
+   * сервер не подтвердит. */
+  let serverSynced = false;
+  let syncTimer = null;
+
+  const syncSubscription = async (retriesLeft) => {
+    if (!swReg || !serverConfigured) return serverSynced;
+    try {
+      const sub = await swReg.pushManager.getSubscription();
+      const uid = getUid();
+      if (!sub || !uid) return serverSynced;
+      await sendToServer(PUSH_SERVER + '/subscribe', {
+        uid: uid,
+        timezone: tzName(),
+        subscription: sub.toJSON(),
+      });
+      serverSynced = true;
+      if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+      console.info('[push-bridge] подписка подтверждена сервером');
+    } catch (e) {
+      console.warn('[push-bridge] /subscribe не дошёл:', e && e.message);
+      if (typeof retriesLeft === 'number' && retriesLeft > 0) {
+        if (syncTimer) clearTimeout(syncTimer);
+        const delay = retriesLeft > 8 ? 15000 : 60000; // сначала чаще, потом раз в минуту
+        syncTimer = setTimeout(() => { syncSubscription(retriesLeft - 1).catch(() => {}); }, delay);
+      }
+    }
+    return serverSynced;
   };
 
   const registerSW = async () => {
@@ -398,6 +437,7 @@
         supported: this.supported,
         permission: Notification.permission,
         subscribed,
+        serverSynced: subscribed ? serverSynced : true,
       };
     },
 
@@ -437,9 +477,13 @@
           timezone: tzName(),
           subscription: sub.toJSON(),
         });
+        serverSynced = true;
+        if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
       } catch (e) {
         if (!uid) throw new Error('Сервер недоступен или вход не выполнен (нет uid)');
-        throw new Error('Не удалось передать подписку серверу: ' + (e && e.message));
+        // Сервер мог спать (холодный старт) — запускаем автоповтор в фоне.
+        syncSubscription(12).catch(() => {});
+        throw new Error('Сервер не ответил (возможно, просыпался) — подписка сохранена и будет передана автоматически');
       }
 
       // подписка готова — сразу отправляем расписание
@@ -474,6 +518,9 @@
               // разрешение есть, подписки нет (обновление браузера/SW) — молча восстановим
               await window.fletPush.subscribe().catch(() => {});
             } else {
+              // Локальная подписка есть: ОБЯЗАТЕЛЬНО повторяем /subscribe —
+              // прежняя попытка могла уйти в спящий сервер и потеряться (v2).
+              if (!serverSynced) syncSubscription(12).catch(() => {});
               await uploadSchedule().catch(() => {});
             }
             hideBanner();
@@ -483,16 +530,19 @@
             console.info('[push-bridge] уведомления запрещены в настройках Safari');
           }
 
-          // Периодическая загрузка расписания, пока приложение открыто
-          setInterval(() => {
+          // Периодическая загрузка расписания, пока приложение открыто.
+          // Заодно дотягиваем подписку до сервера, если она ещё не подтверждена (v2).
+          setInterval(async () => {
             if (document.visibilityState === 'visible') {
-              uploadSchedule().catch(() => {});
+              if (!serverSynced) await syncSubscription(2).catch(() => {});
+              await uploadSchedule().catch(() => {});
             }
           }, SCHEDULE_UPLOAD_INTERVAL_MS);
 
-          // Уход в фон — последний шанс синхронизировать расписание
+          // Уход в фон — последний шанс синхронизировать расписание и подписку
           document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
+              if (!serverSynced) syncSubscription(2).catch(() => {});
               uploadSchedule().catch(() => {});
             }
           });

@@ -125,7 +125,11 @@
         return;
       }
       if (st.subscribed && st.permission === 'granted') {
-        setStatus('ok', 'Уведомления включены ✓');
+        if (st.serverSynced) {
+          setStatus('ok', 'Уведомления включены ✓ (сервер подтвердил)');
+        } else {
+          setStatus('warn', 'Включены, но сервер ещё не подтвердил — откройте приложение ещё раз через минуту или нажмите «Разрешить уведомления»');
+        }
       } else if (st.permission === 'denied') {
         setStatus('err', 'Запрещено в настройках Safari → Уведомления');
       } else {
@@ -161,8 +165,11 @@
           body: JSON.stringify({ uid: window.fletPush.getUid() }),
         });
         const data = await resp.json();
-        msg(data.sent > 0 ? 'Отправлено! Проверьте шторку уведомлений.' :
-            ('Сервер ответил: ' + JSON.stringify(data)));
+        if (data.sent > 0) {
+          msg('Отправлено! Проверьте шторку уведомлений.');
+        } else {
+          msg('Сервер не нашёл активных подписок для вашего входа (' + JSON.stringify(data) + '). Нажмите «Разрешить уведомления», затем повторите тест через минуту.');
+        }
       } catch (e) {
         msg('Ошибка: ' + e.message);
       }
