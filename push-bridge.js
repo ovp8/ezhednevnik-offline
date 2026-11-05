@@ -60,7 +60,7 @@
    * Журнал — в localStorage['ezh_push_diag'], последние 40 событий.
    * push-setup.html показывает его кнопкой «Диагностика» — по нему видно,
    * что именно происходило на устройстве (регистрация SW, ответы сервера). */
-  const BRIDGE_VERSION = 'v2.2';
+  const BRIDGE_VERSION = 'v2.3';
   const DIAG_KEY = 'ezh_push_diag';
 
   const isStandalone = () => {
@@ -197,11 +197,21 @@
       const sub = await swReg.pushManager.getSubscription();
       const uid = getUid();
       if (!sub || !uid) return serverSynced;
-      await sendToServer(PUSH_SERVER + '/subscribe', {
+      const res = await sendToServer(PUSH_SERVER + '/subscribe', {
         uid: uid,
         timezone: tzName(),
         subscription: sub.toJSON(),
       });
+      if (res && res.beacon) {
+        // sendBeacon не возвращает ответ сервера — подтверждением НЕ считается.
+        // Планируем ретрай, чтобы подтверждение пришло прямым POST.
+        diag('beacon поставлен в очередь; подтверждение — только прямым POST');
+        if (typeof retriesLeft === 'number' && retriesLeft > 0) {
+          if (syncTimer) clearTimeout(syncTimer);
+          syncTimer = setTimeout(() => { syncSubscription(retriesLeft - 1).catch(() => {}); }, 15000);
+        }
+        return serverSynced;
+      }
       serverSynced = true;
       if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
       diag('подписка подтверждена сервером (uid=' + String(uid).slice(0, 8) + '…)');
