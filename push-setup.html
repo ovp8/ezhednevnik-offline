@@ -31,7 +31,7 @@
 
     h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
 
-    .sub { font-size: 14px; color: #9AA0A6; line-height: 1.5; margin-bottom: 22px; }
+    .sub { font-size: 14px; color: #9AA0A6; line-height: 1.5; margin-bottom: 18px; }
 
     .status {
       display: flex;
@@ -41,13 +41,15 @@
       padding: 12px 14px;
       border-radius: 12px;
       background: #1F2430;
-      margin-bottom: 18px;
+      margin-bottom: 10px;
     }
 
     .dot { width: 10px; height: 10px; border-radius: 50%; background: #9AA0A6; flex: none; }
     .dot.ok { background: #34C759; }
     .dot.warn { background: #FF9F0A; }
     .dot.err { background: #FF453A; }
+
+    #meta { font-size: 12px; color: #6B7280; text-align: center; margin-bottom: 16px; }
 
     button {
       width: 100%;
@@ -78,7 +80,23 @@
 
     .hint b { color: #E8EAED; }
 
-    #msg { font-size: 13px; color: #9AA0A6; margin-top: 10px; min-height: 16px; text-align: center; }
+    #msg { font-size: 13px; color: #9AA0A6; margin-top: 10px; min-height: 16px; text-align: center; line-height: 1.5; }
+
+    #diagOut {
+      display: none;
+      margin-top: 10px;
+      padding: 10px;
+      background: #0F1115;
+      border-radius: 10px;
+      font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      color: #9AA0A6;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 190px;
+      overflow-y: auto;
+    }
   </style>
 </head>
 
@@ -88,13 +106,16 @@
     <p class="sub">Системные напоминания «Ежедневника» на этом устройстве — даже когда приложение закрыто.</p>
 
     <div class="status"><span class="dot" id="dot"></span><span id="statusText">Проверяем…</span></div>
+    <div id="meta"></div>
 
     <button class="primary" id="btnEnable">Разрешить уведомления</button>
     <button class="ghost" id="btnTest">Проверить уведомление</button>
+    <button class="ghost" id="btnDiag">Диагностика связи</button>
     <button class="ghost" id="btnOff">Отключить</button>
     <button class="ghost" id="btnBack">← Вернуться в приложение</button>
 
     <div id="msg"></div>
+    <pre id="diagOut"></pre>
 
     <p class="hint">
       <b>Установка на iPhone:</b> в Safari нажмите «Поделиться», затем
@@ -103,7 +124,7 @@
     </p>
   </div>
 
-  <script src="push-bridge.js"></script>
+  <script src="push-bridge.js?v=2.2"></script>
   <script>
     const $ = (id) => document.getElementById(id);
     const msg = (t) => { $('msg').textContent = t || ''; };
@@ -119,9 +140,11 @@
         await new Promise(r => setTimeout(r, 100));
       }
       if (!window.fletPush) { setStatus('err', 'Мост уведомлений не загрузился'); return; }
+      $('meta').textContent = 'мост ' + (window.fletPush.version || '?') +
+        ' · сервер: ' + (window.fletPush.config && window.fletPush.config.server ? window.fletPush.config.server.replace(/^https?:\/\//, '') : 'не задан');
       const st = await window.fletPush.status();
       if (!st.supported) {
-        setStatus('warn', 'Браузер не поддерживает Web Push. Откройте страницу через HTTPS в Safari.');
+        setStatus('warn', 'Браузер не поддерживает Web Push. Откройте страницу из установленного приложения (иконка на экране «Домой»).');
         $('btnEnable').disabled = true;
         return;
       }
@@ -129,7 +152,7 @@
         if (st.serverSynced) {
           setStatus('ok', 'Уведомления включены ✓ (сервер подтвердил)');
         } else {
-          setStatus('warn', 'Включены, но сервер ещё не подтвердил — откройте приложение ещё раз через минуту или нажмите «Разрешить уведомления»');
+          setStatus('warn', 'Включены, но сервер ещё не подтвердил — нажмите «Диагностика связи» и пришлите скриншот, если не подтвердится за пару минут');
         }
       } else if (st.permission === 'denied') {
         setStatus('err', 'Запрещено в настройках Safari → Уведомления');
@@ -174,6 +197,37 @@
       } catch (e) {
         msg('Ошибка: ' + e.message);
       }
+    };
+
+    // ===== Диагностика (v2.2): проверка связи + журнал событий моста =====
+    $('btnDiag').onclick = async () => {
+      const out = $('diagOut');
+      const showLog = () => {
+        let log = [];
+        try { log = window.fletPush.diagLog ? window.fletPush.diagLog() : []; } catch (e) {}
+        out.textContent = log.length
+          ? log.map(x => x.t + '  ' + x.m).join('\n')
+          : '(журнал пуст — мост не записал событий)';
+        out.style.display = 'block';
+      };
+      showLog();
+      const server = window.fletPush.config && window.fletPush.config.server;
+      if (!server) { msg('Адрес push-сервера не задан.'); return; }
+      msg('Проверяем связь с сервером…');
+      const t0 = Date.now();
+      try {
+        const resp = await fetch(server + '/health?ts=' + Date.now(), { cache: 'no-store' });
+        const dt = Date.now() - t0;
+        const data = await resp.json().catch(() => ({}));
+        msg('Связь есть: HTTP ' + resp.status + ', ' + dt + ' мс. Подписок на сервере: ' +
+          (data.subscriptions !== undefined ? data.subscriptions : '?') +
+          '. Если ниже статус «сервер подтвердил» не появится — нажмите «Разрешить уведомления» ещё раз.');
+      } catch (e) {
+        const dt = Date.now() - t0;
+        msg('Сервер недоступен из браузера (' + dt + ' мс): ' + e.message +
+          '. Сделайте скриншот этого сообщения и журнала ниже.');
+      }
+      refresh();
     };
 
     $('btnOff').onclick = async () => {

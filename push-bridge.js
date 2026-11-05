@@ -17,12 +17,16 @@
  *       POST {server}/suppress, чтобы не приходил дубль push.
  *  4. Баннер «Включить напоминания» — включение в один тап (iOS требует
  *     запрос разрешения из жеста пользователя).
- *  5. НАДЁЖНОСТЬ (v2): подписка на сервер повторяется автоматически, пока
- *     сервер её не подтвердит. Спящий Render просыпается до минуты, поэтому
- *     одиночный POST /subscribe мог теряться — теперь есть ретраи и повтор
- *     при каждом запуске приложения.
+ *  5. НАДЁЖНОСТЬ (v2.2): подписка на сервер повторяется автоматически, пока
+ *     сервер её не подтвердит. Отправка идёт в ТРИ ступени: обычный JSON →
+ *     «простой» запрос text/plain (БЕЗ CORS-прелифта — уходит на спящий
+ *     сервер немедленно) → navigator.sendBeacon (уходит даже при закрытии
+ *     страницы). Сервер FastAPI парсит JSON-тело независимо от Content-Type.
+ *     Все события пишутся в диагностический журнал localStorage
+ *     ['ezh_push_diag'] — виден на push-setup.html.
  *  6. Экспортирует window.fletPush для push-setup.html:
- *     fletPush.subscribe() / unsubscribe() / status() / getUid() / config.
+ *     fletPush.subscribe() / unsubscribe() / status() / getUid() / config /
+ *     version / diagLog().
  *
  * ФИКС ЗВУКА (iOS): AudioContext создаётся заранее и разблокируется на
  * первом касании экрана.
@@ -51,6 +55,31 @@
   const DISMISS_KEY = 'ezh_push_banner_dismissed';
 
   const serverConfigured = /^https?:\/\//.test(PUSH_SERVER) && PUSH_SERVER.indexOf('ВАШ') === -1;
+
+  /* ============ ВЕРСИЯ И ДИАГНОСТИЧЕСКИЙ ЖУРНАЛ (v2.2) ============
+   * Журнал — в localStorage['ezh_push_diag'], последние 40 событий.
+   * push-setup.html показывает его кнопкой «Диагностика» — по нему видно,
+   * что именно происходило на устройстве (регистрация SW, ответы сервера). */
+  const BRIDGE_VERSION = 'v2.2';
+  const DIAG_KEY = 'ezh_push_diag';
+
+  const isStandalone = () => {
+    try {
+      return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+        window.navigator.standalone === true;
+    } catch (e) { return false; }
+  };
+
+  const diag = (m) => {
+    try {
+      const arr = JSON.parse(localStorage.getItem(DIAG_KEY) || '[]');
+      arr.push({ t: new Date().toISOString().slice(11, 23), m: String(m).slice(0, 220) });
+      while (arr.length > 40) arr.shift();
+      localStorage.setItem(DIAG_KEY, JSON.stringify(arr));
+    } catch (e) { /* приватный режим */ }
+  };
+
+  diag('мост ' + BRIDGE_VERSION + ' старт; standalone=' + isStandalone());
 
   const urlBase64ToUint8Array = (base64String) => {
     const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -91,14 +120,65 @@
     catch (e) { return ''; }
   };
 
-  const sendToServer = async (url, payload) => {
-    const resp = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    return resp.json().catch(() => ({}));
+  /* ====== Отправка на сервер в ТРИ ступени (v2.2) ======
+   * Ступень 1 — обычный JSON-запрос. Браузер перед ним делает CORS-прелифт
+   * (OPTIONS); на спящем Render прелифт висит 20–60 с холодного старта и
+   * может отвалиться — тогда POST вообще не уйдёт.
+   * Ступень 2 — «простой» запрос: Content-Type: text/plain. Прелифт НЕ
+   * требуется, POST уходит немедленно. FastAPI читает тело через req.json()
+   * и парсит JSON независимо от Content-Type (проверено на живом сервере).
+   * Ступень 3 — navigator.sendBeacon с Blob text/plain: отправка уходит даже
+   * при скрытии/закрытии страницы, тоже без прелифта.
+   * opts.quiet — не писать неудачи в диагностический журнал (для второстепенных
+   * вызовов вроде /suppress, чтобы не засорять журнал). */
+  const sendToServer = async (url, payload, opts) => {
+    const quiet = !!(opts && opts.quiet);
+    const body = JSON.stringify(payload);
+    let lastErr = null;
+
+    // Ступень 1: обычный JSON-запрос (стандартный путь)
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return await resp.json().catch(() => ({}));
+    } catch (e) {
+      lastErr = e;
+      if (!quiet) diag('POST json → ' + (e && e.message ? e.message : e));
+    }
+
+    // Ступень 2: простой запрос без прелифта
+    try {
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body,
+      });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      diag('POST plain → ок');
+      return await resp.json().catch(() => ({}));
+    } catch (e) {
+      lastErr = e;
+      if (!quiet) diag('POST plain → ' + (e && e.message ? e.message : e));
+    }
+
+    // Ступень 3: sendBeacon (fire-and-forget)
+    try {
+      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        const blob = new Blob([body], { type: 'text/plain;charset=UTF-8' });
+        if (navigator.sendBeacon(url, blob)) {
+          diag('POST beacon → принят браузером');
+          return { ok: true, beacon: true };
+        }
+      }
+    } catch (e) {
+      lastErr = e;
+      if (!quiet) diag('POST beacon → ' + (e && e.message ? e.message : e));
+    }
+    throw (lastErr || new Error('Сервер недоступен'));
   };
 
   /* ====== Надёжная синхронизация подписки с сервером (v2) ======
@@ -124,12 +204,14 @@
       });
       serverSynced = true;
       if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+      diag('подписка подтверждена сервером (uid=' + String(uid).slice(0, 8) + '…)');
       console.info('[push-bridge] подписка подтверждена сервером');
     } catch (e) {
       console.warn('[push-bridge] /subscribe не дошёл:', e && e.message);
       if (typeof retriesLeft === 'number' && retriesLeft > 0) {
         if (syncTimer) clearTimeout(syncTimer);
         const delay = retriesLeft > 8 ? 15000 : 60000; // сначала чаще, потом раз в минуту
+        diag('/subscribe не дошёл (' + (e && e.message ? e.message : e) + '), ретрай через ' + delay / 1000 + ' с');
         syncTimer = setTimeout(() => { syncSubscription(retriesLeft - 1).catch(() => {}); }, delay);
       }
     }
@@ -137,12 +219,15 @@
   };
 
   const registerSW = async () => {
-    if (!('serviceWorker' in navigator)) return null;
+    if (!('serviceWorker' in navigator)) { diag('SW: navigator.serviceWorker недоступен'); return null; }
     try {
       // Скоуп ./push/ — чтобы НЕ замещать родной SW Flet (flutter_service_worker.js)
       // на корне страницы. Push-события приходят в SW без контроля страницы.
-      return await navigator.serviceWorker.register('./sw.js', { scope: './push/' });
+      const reg = await navigator.serviceWorker.register('./sw.js', { scope: './push/' });
+      diag('SW: зарегистрирован, scope=' + (reg && reg.scope ? reg.scope : '?'));
+      return reg;
     } catch (e) {
+      diag('SW: ОШИБКА регистрации: ' + (e && e.message ? e.message : e));
       console.warn('[push-bridge] SW register failed:', e);
       return null;
     }
@@ -158,9 +243,6 @@
    * window.open: адрес строим от текущей страницы; внутри установленного
    * PWA открываем страницу В ТОМ ЖЕ окне (только там есть Web Push). */
   try {
-    const isStandalone = () =>
-      (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
-      window.navigator.standalone === true;
     const origWindowOpen = window.open ? window.open.bind(window) : null;
     window.open = function (url, target, features) {
       try {
@@ -338,7 +420,7 @@
       await sendToServer(PUSH_SERVER + '/suppress', {
         uid: uid,
         task_id: data.task_id || 0,
-      });
+      }, { quiet: true });
     } catch (e) { /* не критично */ }
   };
 
@@ -456,6 +538,13 @@
 
     getUid: getUid,
 
+    version: BRIDGE_VERSION,
+
+    diagLog() {
+      try { return JSON.parse(localStorage.getItem(DIAG_KEY) || '[]'); }
+      catch (e) { return []; }
+    },
+
     async status() {
       if (!('Notification' in window)) {
         return { supported: false, permission: 'unsupported', subscribed: false };
@@ -505,19 +594,27 @@
       }
 
       const uid = getUid();
+      diag('подписка создана локально, uid=' + (uid ? String(uid).slice(0, 8) + '…' : 'НЕТ')); 
       try {
-        await sendToServer(PUSH_SERVER + '/subscribe', {
+        const res = await sendToServer(PUSH_SERVER + '/subscribe', {
           uid: uid,
           timezone: tzName(),
           subscription: sub.toJSON(),
         });
-        serverSynced = true;
-        if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+        if (res && res.beacon) {
+          // sendBeacon не возвращает ответ сервера — подтверждаем ретраем
+          diag('подписка отправлена через beacon; ждём подтверждения ретраем');
+          syncSubscription(12).catch(() => {});
+        } else {
+          serverSynced = true;
+          if (syncTimer) { clearTimeout(syncTimer); syncTimer = null; }
+          diag('подписка подтверждена сервером');
+        }
       } catch (e) {
         if (!uid) throw new Error('Сервер недоступен или вход не выполнен (нет uid)');
         // Сервер мог спать (холодный старт) — запускаем автоповтор в фоне.
         syncSubscription(12).catch(() => {});
-        throw new Error('Сервер не ответил (возможно, просыпался) — подписка сохранена и будет передана автоматически');
+        throw new Error('Сервер не ответил (' + (e && e.message ? e.message : 'ошибка') + ') — подписка сохранена и будет передана автоматически');
       }
 
       // подписка готова — сразу отправляем расписание
@@ -544,6 +641,7 @@
       setTimeout(async () => {
         try {
           const st = await window.fletPush.status();
+          diag('автозапуск: permission=' + st.permission + ', subscribed=' + st.subscribed + ', serverSynced=' + st.serverSynced);
           let dismissed = false;
           try { dismissed = localStorage.getItem(DISMISS_KEY) === '1'; } catch (e) {}
 
