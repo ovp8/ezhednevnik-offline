@@ -92,6 +92,7 @@
     <button class="primary" id="btnEnable">Разрешить уведомления</button>
     <button class="ghost" id="btnTest">Проверить уведомление</button>
     <button class="ghost" id="btnOff">Отключить</button>
+    <button class="ghost" id="btnBack">← Вернуться в приложение</button>
 
     <div id="msg"></div>
 
@@ -183,6 +184,16 @@
         msg('Ошибка: ' + e.message);
       }
       refresh();
+    };
+
+    $('btnBack').onclick = () => {
+      // возвращаемся к открытому приложению; если истории нет — на главную
+      if (window.history && window.history.length > 1) {
+        window.history.back();
+        setTimeout(() => { window.location.href = './'; }, 1500);
+      } else {
+        window.location.href = './';
+      }
     };
 
     refresh();

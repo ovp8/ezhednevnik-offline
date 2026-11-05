@@ -150,6 +150,40 @@
 
   const swReg = await registerSW();
 
+  /* ====== Починка кнопки «Уведомления» в настройках приложения (v2.1) ======
+   * Настройки открывают '/push-setup.html' (адрес ОТ КОРНЯ сайта) через
+   * launch_url(..., BLANK) → window.open. Из-за подпапки GitHub Pages это
+   * ведёт на https://ovp8.github.io/push-setup.html (404), а в установленном
+   * PWA новая вкладка = Safari, где Web Push не работает. Перехватываем
+   * window.open: адрес строим от текущей страницы; внутри установленного
+   * PWA открываем страницу В ТОМ ЖЕ окне (только там есть Web Push). */
+  try {
+    const isStandalone = () =>
+      (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+      window.navigator.standalone === true;
+    const origWindowOpen = window.open ? window.open.bind(window) : null;
+    window.open = function (url, target, features) {
+      try {
+        if (typeof url === 'string' && url.indexOf('/push-setup.html') === 0) {
+          // '/push-setup.html' — абсолютный путь: с любым base он даст корень
+          // сайта (404 на GitHub Pages). Превращаем в ОТНОСИТЕЛЬНЫЙ и строим
+          // полный адрес от текущей страницы (с учётом подпапки Pages).
+          const rel = url.replace(/^\/+/, '');
+          const abs = new URL(rel, window.location.href).href;
+          if (isStandalone()) {
+            window.location.href = abs;
+            return null;
+          }
+          if (origWindowOpen) return origWindowOpen(abs, '_blank', features);
+          window.location.href = abs;
+          return null;
+        }
+      } catch (e) { /* не наш случай — идём дальше */ }
+      if (origWindowOpen) return origWindowOpen(url, target, features);
+      return null;
+    };
+  } catch (e) { console.warn('[push-bridge] window.open hook failed:', e); }
+
   /* ================= Звук (Web Audio) =================
    * iOS разблокирует AudioContext только в обработчике жеста пользователя.
    * Держим ОДИН живой контекст и разблокируем его на первом касании —
